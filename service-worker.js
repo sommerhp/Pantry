@@ -1,0 +1,49 @@
+// Bump this when you deploy an update — it forces the new files to replace the old cache.
+const CACHE_NAME = "pantry-keeper-v1";
+
+const APP_SHELL = [
+  "./",
+  "./index.html",
+  "./app.js",
+  "./manifest.json",
+  "./icon-192.png",
+  "./icon-512.png",
+];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches
+      .keys()
+      .then((names) => Promise.all(names.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n))))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const url = new URL(event.request.url);
+
+  // Never cache calls to the Anthropic API — those need to hit the network live.
+  if (url.hostname === "api.anthropic.com") return;
+
+  // Cache-first for the app shell and CDN scripts, so the app opens instantly offline.
+  event.respondWith(
+    caches.match(event.request).then((cached) => {
+      if (cached) return cached;
+      return fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200 && event.request.method === "GET") {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => cached);
+    })
+  );
+});

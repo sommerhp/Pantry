@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<title>Pantry Keeper</title>
+
+<!-- PWA / installable home-screen behavior -->
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#2B2A25" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Pantry" />
+<meta name="mobile-web-app-capable" content="yes" />
+
+<style>
+  html, body { margin: 0; padding: 0; background: #EDE6D6; }
+  #root { min-height: 100vh; }
+  #boot-fallback {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; font-family: -apple-system, sans-serif;
+    color: #8A6D3B; letter-spacing: 0.05em; font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<div id="root"><div id="boot-fallback">loading pantry…</div></div>
+
+<!-- Storage shim: swaps Claude Artifact's window.storage for plain browser localStorage.
+     Defined before anything else runs so app.js's window.storage.get/set calls work unchanged. -->
+<script>
+  window.storage = {
+    async get(key) {
+      try {
+        const v = localStorage.getItem(key);
+        if (v === null) return null;
+        return { key, value: v };
+      } catch (e) {
+        return null;
+      }
+    },
+    async set(key, value) {
+      try {
+        localStorage.setItem(key, value);
+      } catch (e) {
+        throw e; // let the app's own error banner surface storage failures (e.g. quota)
+      }
+      return { key, value };
+    },
+    async delete(key) {
+      localStorage.removeItem(key);
+      return { key, deleted: true };
+    },
+    async list(prefix) {
+      const keys = Object.keys(localStorage).filter((k) => !prefix || k.startsWith(prefix));
+      return { keys };
+    },
+  };
+</script>
+
+<!-- React + Babel from CDN — no build step needed for this phase -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" src="app.js"></script>
+<script type="text/babel">
+  const container = document.getElementById("root");
+  const root = ReactDOM.createRoot(container);
+  root.render(<PantryKeeper />);
+</script>
+
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("service-worker.js").catch(() => {
+        // offline caching just won't be available — the app still works online
+      });
+    });
+  }
+</script>
+
+</body>
+</html>
