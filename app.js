@@ -181,6 +181,25 @@ function similarityScore(a, b) {
   const ga = synonymGroupOf(a);
   const gb = synonymGroupOf(b);
   if (ga !== null && ga === gb) return 0.95;
+  // multi-word names sharing a common word (e.g. "Raclette Cheese" / "Cottage Cheese")
+  // score deceptively high on whole-string edit distance, since the shared word
+  // dominates. Compare only the words that differ instead — a real typo in the
+  // distinguishing word still scores high, but genuinely different words don't.
+  const wordsA = na.split(/\s+/);
+  const wordsB = nb.split(/\s+/);
+  if (wordsA.length > 1 || wordsB.length > 1) {
+    const setA = new Set(wordsA);
+    const setB = new Set(wordsB);
+    const uniqueA = wordsA.filter((w) => !setB.has(w));
+    const uniqueB = wordsB.filter((w) => !setA.has(w));
+    if (uniqueA.length > 0 && uniqueB.length > 0) {
+      const distA = uniqueA.join(" ");
+      const distB = uniqueB.join(" ");
+      const dist = levenshtein(distA, distB);
+      const maxLen = Math.max(distA.length, distB.length, 1);
+      return 1 - dist / maxLen;
+    }
+  }
   // containment only counts as a real signal once the shorter string has enough
   // characters to not be a coincidence (e.g. "c" inside "cookies" is meaningless)
   const shorter = Math.min(na.length, nb.length);
@@ -2017,7 +2036,6 @@ function AddItemModal({ items, onClose, onSave }) {
   const isDupe = isDuplicateName(name, items);
   const canSave =
     name.trim() &&
-    !isDupe &&
     (category !== "fresh" || (mode === "exact" ? exactDate : days && Number(days) > 0));
 
   function handleSave() {
@@ -2044,7 +2062,12 @@ function AddItemModal({ items, onClose, onSave }) {
         onChange={(e) => setName(e.target.value)}
         placeholder="e.g. Rolled oats"
       />
-      {isDupe && <div style={S.dupeWarning}>You already have "{name.trim()}" in your pantry.</div>}
+      {isDupe && (
+        <div style={S.dupeWarning}>
+          You already have "{name.trim()}" in your pantry — you can still add this as a separate item if
+          you mean something different.
+        </div>
+      )}
 
       <label style={S.label}>Category</label>
       <div style={S.segment}>
@@ -2105,7 +2128,6 @@ function EditItemModal({ item, items, onClose, onSave }) {
   const isDupe = isDuplicateName(name, items, item.id);
   const canSave =
     name.trim() &&
-    !isDupe &&
     (category !== "fresh" || (mode === "exact" ? exactDate : days && Number(days) > 0));
 
   function handleSave() {
@@ -2132,7 +2154,12 @@ function EditItemModal({ item, items, onClose, onSave }) {
         value={name}
         onChange={(e) => setName(e.target.value)}
       />
-      {isDupe && <div style={S.dupeWarning}>You already have "{name.trim()}" in your pantry.</div>}
+      {isDupe && (
+        <div style={S.dupeWarning}>
+          You already have "{name.trim()}" in your pantry — you can still add this as a separate item if
+          you mean something different.
+        </div>
+      )}
 
       <label style={S.label}>Category</label>
       <div style={S.segment}>
@@ -2855,7 +2882,6 @@ function AddRecipeModal({ items, recipes, onClose, onSave, onCreateItem, initial
   const isDupe = isDuplicateName(name, recipes);
   const canSave =
     name.trim() &&
-    !isDupe &&
     (picked.length > 0 || freeIngredients.length > 0 || optionalPicked.length > 0 || optionalFreeIngredients.length > 0);
 
   return (
@@ -2873,7 +2899,11 @@ function AddRecipeModal({ items, recipes, onClose, onSave, onCreateItem, initial
         onChange={(e) => setName(e.target.value)}
         placeholder="e.g. Rice and beans"
       />
-      {isDupe && <div style={S.dupeWarning}>You already have a recipe named "{name.trim()}".</div>}
+      {isDupe && (
+        <div style={S.dupeWarning}>
+          You already have a recipe named "{name.trim()}" — you can still save this as a separate recipe.
+        </div>
+      )}
 
       <label style={S.label}>Yield (optional)</label>
       <div style={S.addRow}>
@@ -3212,14 +3242,17 @@ function RecipeEditModal({ recipe, items, recipes, onClose, onSave, onDelete, on
   const isDupe = isDuplicateName(name, recipes, recipe.id);
   const canSave =
     name.trim() &&
-    !isDupe &&
     (picked.length > 0 || freeIngredients.length > 0 || optionalPicked.length > 0 || optionalFreeIngredients.length > 0);
 
   return (
     <Modal onClose={onClose} title="Edit recipe">
       <label style={S.label}>Recipe name</label>
       <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} />
-      {isDupe && <div style={S.dupeWarning}>You already have a recipe named "{name.trim()}".</div>}
+      {isDupe && (
+        <div style={S.dupeWarning}>
+          You already have a recipe named "{name.trim()}" — you can still save this as a separate recipe.
+        </div>
+      )}
 
       <label style={S.label}>Yield (optional)</label>
       <div style={S.addRow}>
