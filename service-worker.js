@@ -1,5 +1,5 @@
 // Bump this when you deploy an update — it forces the new files to replace the old cache.
-const CACHE_NAME = "pantry-keeper-v4";
+const CACHE_NAME = "pantry-keeper-v5";
 
 const APP_SHELL = [
   "./",
@@ -15,7 +15,15 @@ const APP_SHELL = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())
+    caches
+      .open(CACHE_NAME)
+      .then((cache) =>
+        // { cache: "reload" } forces a real network fetch for each file instead of letting
+        // the browser silently hand back its own stale HTTP-cached copy — without this,
+        // "updating" the service worker could still re-cache old content.
+        Promise.all(APP_SHELL.map((url) => cache.add(new Request(url, { cache: "reload" }))))
+      )
+      .then(() => self.skipWaiting())
   );
 });
 
