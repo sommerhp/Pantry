@@ -1984,6 +1984,12 @@ function RestockPrompt({ name, shelfLifeDays, onConfirm, onCancel }) {
 function SettingsModal({ onClose }) {
   const [key, setKey] = useState(getApiKey());
   const [saved, setSaved] = useState(false);
+  const [showBackup, setShowBackup] = useState(false);
+  const [backupText, setBackupText] = useState("");
+  const [copyMsg, setCopyMsg] = useState("");
+  const [restoreText, setRestoreText] = useState("");
+  const [restoreMsg, setRestoreMsg] = useState("");
+  const [confirmRestore, setConfirmRestore] = useState(false);
 
   function handleSave() {
     setStoredApiKey(key.trim());
@@ -1996,8 +2002,107 @@ function SettingsModal({ onClose }) {
     setStoredApiKey("");
   }
 
+  function openBackup() {
+    let raw = "";
+    try {
+      raw = localStorage.getItem(STORAGE_KEY) || "";
+    } catch (e) {
+      raw = "";
+    }
+    setBackupText(raw);
+    setShowBackup(true);
+    setCopyMsg("");
+    setRestoreMsg("");
+  }
+
+  async function copyBackup() {
+    try {
+      await navigator.clipboard.writeText(backupText);
+      setCopyMsg("Copied ✓ — paste it somewhere safe, like Notes.");
+    } catch (e) {
+      setCopyMsg("Couldn't auto-copy — tap the box above, select all, and copy manually.");
+    }
+  }
+
+  function handleRestore() {
+    try {
+      const parsed = JSON.parse(restoreText);
+      if (!parsed || typeof parsed !== "object" || !("items" in parsed)) {
+        setRestoreMsg("That doesn't look like a Pantry Keeper backup — check you pasted the whole thing.");
+        return;
+      }
+      localStorage.setItem(STORAGE_KEY, restoreText);
+      setRestoreMsg("Restored ✓ — close Settings and reopen the app to see it.");
+      setConfirmRestore(false);
+    } catch (e) {
+      setRestoreMsg("That's not valid data — check you copied the whole backup with nothing missing.");
+    }
+  }
+
   return (
     <Modal onClose={onClose} title="Settings">
+      <label style={S.label}>Backup your data</label>
+      <div style={S.pickerNote}>
+        Your pantry lives only on this phone, in this browser. If you ever clear this site's data, switch
+        phones, or reinstall the app, everything is lost unless you've backed it up here first.
+      </div>
+      {!showBackup ? (
+        <button style={{ ...S.primaryBtn, marginBottom: "16px" }} onClick={openBackup}>
+          Back up now
+        </button>
+      ) : (
+        <>
+          <textarea
+            style={{ ...S.textarea, fontFamily: FONT.mono, fontSize: "10px" }}
+            rows={5}
+            readOnly
+            value={backupText}
+            onFocus={(e) => e.target.select()}
+          />
+          <div style={S.cardBtnRow}>
+            <button style={{ ...S.primaryBtn, flex: 1 }} onClick={copyBackup}>
+              Copy to clipboard
+            </button>
+            <button style={{ ...S.lowBtn, flex: 1 }} onClick={() => setShowBackup(false)}>
+              Hide
+            </button>
+          </div>
+          {copyMsg && <div style={S.pickerNote}>{copyMsg}</div>}
+        </>
+      )}
+
+      <label style={S.label}>Restore from a backup</label>
+      <div style={S.pickerNote}>
+        Paste a backup you saved earlier. This replaces everything currently in the app — only do this if
+        you mean to.
+      </div>
+      <textarea
+        style={{ ...S.textarea, fontFamily: FONT.mono, fontSize: "10px" }}
+        rows={4}
+        value={restoreText}
+        onChange={(e) => setRestoreText(e.target.value)}
+        placeholder="Paste your backup text here…"
+      />
+      {!confirmRestore ? (
+        <button
+          style={{ ...S.lowBtn, width: "100%", marginBottom: "16px" }}
+          disabled={!restoreText.trim()}
+          onClick={() => setConfirmRestore(true)}
+        >
+          Restore this backup
+        </button>
+      ) : (
+        <div style={S.cardBtnRow}>
+          <button style={{ ...S.confirmDeleteBtn, flex: 1 }} onClick={handleRestore}>
+            Yes, replace everything
+          </button>
+          <button style={{ ...S.confirmCancelBtn, flex: 1 }} onClick={() => setConfirmRestore(false)}>
+            Cancel
+          </button>
+        </div>
+      )}
+      {restoreMsg && <div style={S.pickerNote}>{restoreMsg}</div>}
+
       <label style={S.label}>Anthropic API key</label>
       <div style={S.pickerNote}>
         Needed only for the photo/text recipe import. Stored solely on this phone, in this browser — it

@@ -1,5 +1,5 @@
 // Bump this when you deploy an update — it forces the new files to replace the old cache.
-const CACHE_NAME = "pantry-keeper-v3";
+const CACHE_NAME = "pantry-keeper-v4";
 
 const APP_SHELL = [
   "./",
