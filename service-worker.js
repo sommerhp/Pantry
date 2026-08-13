@@ -1,5 +1,5 @@
 // Bump this when you deploy an update — it forces the new files to replace the old cache.
-const CACHE_NAME = "pantry-keeper-v1";
+const CACHE_NAME = "pantry-keeper-v3";
 
 const APP_SHELL = [
   "./",
@@ -8,6 +8,9 @@ const APP_SHELL = [
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
+  "./vendor/react.production.min.js",
+  "./vendor/react-dom.production.min.js",
+  "./vendor/babel.min.js",
 ];
 
 self.addEventListener("install", (event) => {
