@@ -150,19 +150,28 @@ function synonymGroupOf(name) {
 
 // exact (case-insensitive, trimmed) match — used to block identical names,
 // distinct from the fuzzy similarity system used for suggestions
-function isDuplicateName(name, list, excludeId) {
+// a true exact match (case-insensitive) — there's never a legitimate reason to have
+// two items with literally the same name, so this blocks saving entirely
+function isExactDuplicate(name, list, excludeId) {
   const n = name.trim().toLowerCase();
   if (!n) return false;
-  const group = synonymGroupOf(name);
-  return list.some((x) => {
-    if (x.id === excludeId) return false;
-    if (x.name.trim().toLowerCase() === n) return true;
-    return group !== null && synonymGroupOf(x.name) === group;
-  });
+  return list.some((x) => x.id !== excludeId && x.name.trim().toLowerCase() === n);
 }
 
-// same matching rules as isDuplicateName, but returns the item — used by creation paths
-// that don't have a form to show a warning in, so they resolve to the existing item instead
+// a same-language-group match (e.g. Milk / Milch) that ISN'T an exact match — could be
+// a real duplicate or could be a false positive, so this only warns, never blocks
+function isSynonymDuplicate(name, list, excludeId) {
+  const n = name.trim().toLowerCase();
+  const group = synonymGroupOf(name);
+  if (group === null) return false;
+  return list.some(
+    (x) => x.id !== excludeId && x.name.trim().toLowerCase() !== n && synonymGroupOf(x.name) === group
+  );
+}
+
+// same matching rules as isExactDuplicate/isSynonymDuplicate combined, but returns the
+// item — used by creation paths that don't have a form to show a warning in, so they
+// resolve to the existing item instead
 function findExistingByName(name, list) {
   const n = name.trim().toLowerCase();
   if (!n) return null;
@@ -277,7 +286,9 @@ function freshnessLabel(days) {
 }
 
 function isItemMissing(item) {
-  if (item.category === "staple" || item.category === "spice") return !item.available;
+  if (item.category === "staple" || item.category === "spice" || item.category === "freezer") {
+    return !item.available;
+  }
   if (item.category === "fresh") {
     return !item.available || (daysUntil(item.expiryDate) ?? 0) < 0;
   }
@@ -406,6 +417,7 @@ function PantryKeeper() {
           parsed.items = (parsed.items || []).map((i) => ({
             ...(i.available === undefined ? { ...i, available: !i.low } : i),
             shelfLifeDays: i.shelfLifeDays !== undefined ? i.shelfLifeDays : null,
+            freezeDate: i.freezeDate !== undefined ? i.freezeDate : null,
           }));
           parsed.recipes = (parsed.recipes || []).map((r) => ({
             ...r,
@@ -467,7 +479,7 @@ function PantryKeeper() {
     }
   }
 
-  function createPantryItem({ name, category, expiryDate, shelfLifeDays, staleDate, available }) {
+  function createPantryItem({ name, category, expiryDate, shelfLifeDays, staleDate, freezeDate, available }) {
     const existing = findExistingByName(name, data.items);
     if (existing) return existing.id;
     const item = {
@@ -477,6 +489,7 @@ function PantryKeeper() {
       expiryDate: category === "fresh" ? expiryDate || null : null,
       shelfLifeDays: category === "fresh" ? shelfLifeDays ?? null : null,
       staleDate: category === "staple" ? staleDate || null : null,
+      freezeDate: category === "freezer" ? freezeDate || null : null,
       available: available !== undefined ? available : true,
     };
     let shoppingList = data.shoppingList;
@@ -496,7 +509,7 @@ function PantryKeeper() {
     setShowAdd(false);
   }
 
-  function updateItem(id, { name, category, expiryDate, shelfLifeDays, staleDate }) {
+  function updateItem(id, { name, category, expiryDate, shelfLifeDays, staleDate, freezeDate }) {
     const items = data.items.map((i) => {
       if (i.id !== id) return i;
       const newCategory = category || i.category;
@@ -512,6 +525,8 @@ function PantryKeeper() {
             : null,
         staleDate:
           newCategory === "staple" ? staleDate ?? (i.category === "staple" ? i.staleDate : null) : null,
+        freezeDate:
+          newCategory === "freezer" ? freezeDate ?? (i.category === "freezer" ? i.freezeDate : null) : null,
       };
     });
     persist({ ...data, items });
@@ -790,6 +805,10 @@ function PantryKeeper() {
     () => data.items.filter((i) => i.category === "spice"),
     [data.items]
   );
+  const freezer = useMemo(
+    () => data.items.filter((i) => i.category === "freezer"),
+    [data.items]
+  );
   const staplesForPicker = staples;
 
   if (!loaded) {
@@ -810,9 +829,6 @@ function PantryKeeper() {
           <div style={S.eyebrow}>kitchen ledger</div>
           <h1 style={S.h1}>Pantry Keeper</h1>
         </div>
-        <button style={S.settingsBtn} onClick={() => setShowSettings(true)} aria-label="Settings">
-          ⚙
-        </button>
       </header>
 
       <nav style={S.tabs}>
@@ -842,6 +858,7 @@ function PantryKeeper() {
             fresh={fresh}
             staples={staples}
             spices={spices}
+            freezer={freezer}
             shoppingList={data.shoppingList}
             onToggleAvailable={toggleAvailable}
             onMarkUsedUp={markUsedUp}
@@ -884,6 +901,10 @@ function PantryKeeper() {
           />
         )}
       </main>
+
+      <button style={S.settingsFab} onClick={() => setShowSettings(true)} aria-label="Settings">
+        ⚙
+      </button>
 
       {showAdd && (
         <AddItemModal items={data.items} onClose={() => setShowAdd(false)} onSave={addItem} />
@@ -960,6 +981,7 @@ function PantryTab({
   fresh,
   staples,
   spices,
+  freezer,
   shoppingList,
   onToggleAvailable,
   onMarkUsedUp,
@@ -981,7 +1003,8 @@ function PantryTab({
   const visibleUsedUpFresh = q ? usedUpFresh.filter((i) => i.name.toLowerCase().includes(q)) : usedUpFresh;
   const visibleStaples = q ? staples.filter((i) => i.name.toLowerCase().includes(q)) : staples;
   const visibleSpices = q ? spices.filter((i) => i.name.toLowerCase().includes(q)) : spices;
-  const showSearch = fresh.length + staples.length + spices.length > 10;
+  const visibleFreezer = q ? freezer.filter((i) => i.name.toLowerCase().includes(q)) : freezer;
+  const showSearch = fresh.length + staples.length + spices.length + freezer.length > 10;
   const showUsedUpSection = usedUpOpen || (!!q && visibleUsedUpFresh.length > 0);
   const showSpicesSection = spicesOpen || (!!q && visibleSpices.length > 0);
 
@@ -1062,6 +1085,27 @@ function PantryTab({
         <div style={S.grid}>
           {visibleStaples.map((item) => (
             <StapleCard key={item.id} item={item} onToggleAvailable={onToggleAvailable} onEdit={onEdit} onRemove={onRemove} />
+          ))}
+        </div>
+      )}
+
+      <SectionHead title="Freezer" sub="optional use-by date — add to list is manual, not automatic" accent="#4C6B4F" />
+      {visibleFreezer.length === 0 ? (
+        <EmptyRow
+          text={q ? `No freezer items match "${query}".` : "Nothing in the freezer tracked yet."}
+        />
+      ) : (
+        <div style={S.grid}>
+          {visibleFreezer.map((item) => (
+            <FreezerCard
+              key={item.id}
+              item={item}
+              onToggleAvailable={onToggleAvailable}
+              onAddToList={onAddFreshToList}
+              isOnList={isOnList(item.id)}
+              onEdit={onEdit}
+              onRemove={onRemove}
+            />
           ))}
         </div>
       )}
@@ -1799,6 +1843,62 @@ function UsedUpFreshRow({ item, onRestock, onAddToList, isOnList, onEdit, onRemo
   );
 }
 
+function FreezerCard({ item, onToggleAvailable, onAddToList, isOnList, onEdit, onRemove }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const useByDays = item.freezeDate ? daysUntil(item.freezeDate) : null;
+
+  if (confirmDelete) {
+    return (
+      <div style={S.card}>
+        <div style={S.cardTitle}>{item.name}</div>
+        <div style={S.matchText}>Remove this from your pantry?</div>
+        <div style={S.cardBtnRow}>
+          <button style={{ ...S.lowBtn, flex: 1 }} onClick={() => onRemove(item.id)}>
+            Yes, delete
+          </button>
+          <button style={{ ...S.lowBtn, flex: 1 }} onClick={() => setConfirmDelete(false)}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ ...S.card, ...(item.available ? {} : S.cardUnavailable) }}>
+      <div style={S.cardTitleRow}>
+        <span style={S.cardTitle}>{item.name}</span>
+        <button style={S.editBtn} onClick={() => onEdit(item.id)} aria-label="Edit">
+          ✎
+        </button>
+        <button style={S.removeBtn} onClick={() => setConfirmDelete(true)}>
+          ×
+        </button>
+      </div>
+      {useByDays !== null && (
+        <div style={{ ...S.cardMeta, color: freshnessColor(useByDays) }}>
+          {useByDays < 0 ? "past use-by date" : `use by ~${useByDays}d`}
+        </div>
+      )}
+      <div style={S.cardBtnRow}>
+        <button
+          onClick={() => onToggleAvailable(item.id)}
+          style={{ ...S.lowBtn, flex: 1, ...(item.available ? {} : S.lowBtnActive) }}
+        >
+          {item.available ? "Mark not available" : "Available again"}
+        </button>
+        <button
+          onClick={() => !isOnList && onAddToList(item.id)}
+          disabled={isOnList}
+          style={{ ...S.lowBtn, flex: 1, ...(isOnList ? S.lowBtnActive : {}) }}
+        >
+          {isOnList ? "On list ✓" : "Add to list"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function StapleCard({ item, onToggleAvailable, onEdit, onRemove }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const staleDays = item.staleDate ? daysUntil(item.staleDate) : null;
@@ -2137,23 +2237,35 @@ function AddItemModal({ items, onClose, onSave }) {
   const [exactDate, setExactDate] = useState("");
   const [days, setDays] = useState("");
   const [staleDate, setStaleDate] = useState("");
+  const [freezeDate, setFreezeDate] = useState("");
 
-  const isDupe = isDuplicateName(name, items);
+  const isExactDupe = isExactDuplicate(name, items);
+  const isFuzzyDupe = isSynonymDuplicate(name, items);
   const canSave =
     name.trim() &&
+    !isExactDupe &&
     (category !== "fresh" || (mode === "exact" ? exactDate : days && Number(days) > 0));
 
   function handleSave() {
     if (category === "fresh") {
       if (mode === "exact") {
-        onSave({ name, category, expiryDate: exactDate, shelfLifeDays: null, staleDate });
+        onSave({ name, category, expiryDate: exactDate, shelfLifeDays: null, staleDate: "", freezeDate: "" });
       } else {
-        onSave({ name, category, expiryDate: addDaysISO(days), shelfLifeDays: Number(days), staleDate });
+        onSave({
+          name,
+          category,
+          expiryDate: addDaysISO(days),
+          shelfLifeDays: Number(days),
+          staleDate: "",
+          freezeDate: "",
+        });
       }
     } else if (category === "spice") {
-      onSave({ name, category, expiryDate: "", shelfLifeDays: null, staleDate: "" });
+      onSave({ name, category, expiryDate: "", shelfLifeDays: null, staleDate: "", freezeDate: "" });
+    } else if (category === "freezer") {
+      onSave({ name, category, expiryDate: "", shelfLifeDays: null, staleDate: "", freezeDate });
     } else {
-      onSave({ name, category, expiryDate: "", shelfLifeDays: null, staleDate });
+      onSave({ name, category, expiryDate: "", shelfLifeDays: null, staleDate, freezeDate: "" });
     }
   }
 
@@ -2167,22 +2279,28 @@ function AddItemModal({ items, onClose, onSave }) {
         onChange={(e) => setName(e.target.value)}
         placeholder="e.g. Rolled oats"
       />
-      {isDupe && (
+      {isExactDupe && (
         <div style={S.dupeWarning}>
-          You already have "{name.trim()}" in your pantry — you can still add this as a separate item if
-          you mean something different.
+          You already have "{name.trim()}" in your pantry. Edit that item instead, or use a different
+          name if this is genuinely something else.
+        </div>
+      )}
+      {!isExactDupe && isFuzzyDupe && (
+        <div style={S.dupeWarning}>
+          You already have something similar to "{name.trim()}" in your pantry — you can still add this
+          as a separate item if you mean something different.
         </div>
       )}
 
       <label style={S.label}>Category</label>
       <div style={S.segment}>
-        {["staple", "fresh", "spice"].map((c) => (
+        {["staple", "fresh", "spice", "freezer"].map((c) => (
           <button
             key={c}
             onClick={() => setCategory(c)}
             style={{ ...S.segmentBtn, ...(category === c ? S.segmentActive : {}) }}
           >
-            {c === "staple" ? "Staple (2mo+)" : c === "fresh" ? "Fresh" : "Spice"}
+            {c === "staple" ? "Staple (2mo+)" : c === "fresh" ? "Fresh" : c === "spice" ? "Spice" : "Freezer"}
           </button>
         ))}
       </div>
@@ -2199,6 +2317,20 @@ function AddItemModal({ items, onClose, onSave }) {
         />
       ) : category === "spice" ? (
         <div style={S.pickerNote}>Just tracked as have it / don't have it — no dates needed.</div>
+      ) : category === "freezer" ? (
+        <>
+          <label style={S.label}>Use by (optional)</label>
+          <div style={S.pickerNote}>
+            Just a reference date — doesn't affect anything else, and doesn't add itself to your list
+            automatically. Use "Add to list" on the item when you actually want more.
+          </div>
+          <input
+            type="date"
+            style={S.input}
+            value={freezeDate}
+            onChange={(e) => setFreezeDate(e.target.value)}
+          />
+        </>
       ) : (
         <>
           <label style={S.label}>Goes stale by (optional)</label>
@@ -2229,10 +2361,13 @@ function EditItemModal({ item, items, onClose, onSave }) {
   const [exactDate, setExactDate] = useState(item.expiryDate || "");
   const [days, setDays] = useState(item.shelfLifeDays ? String(item.shelfLifeDays) : "");
   const [staleDate, setStaleDate] = useState(item.staleDate || "");
+  const [freezeDate, setFreezeDate] = useState(item.freezeDate || "");
 
-  const isDupe = isDuplicateName(name, items, item.id);
+  const isExactDupe = isExactDuplicate(name, items, item.id);
+  const isFuzzyDupe = isSynonymDuplicate(name, items, item.id);
   const canSave =
     name.trim() &&
+    !isExactDupe &&
     (category !== "fresh" || (mode === "exact" ? exactDate : days && Number(days) > 0));
 
   function handleSave() {
@@ -2245,6 +2380,8 @@ function EditItemModal({ item, items, onClose, onSave }) {
       }
     } else if (category === "staple") {
       onSave(item.id, { name, category, staleDate });
+    } else if (category === "freezer") {
+      onSave(item.id, { name, category, freezeDate });
     } else {
       onSave(item.id, { name, category });
     }
@@ -2259,22 +2396,28 @@ function EditItemModal({ item, items, onClose, onSave }) {
         value={name}
         onChange={(e) => setName(e.target.value)}
       />
-      {isDupe && (
+      {isExactDupe && (
         <div style={S.dupeWarning}>
-          You already have "{name.trim()}" in your pantry — you can still add this as a separate item if
-          you mean something different.
+          You already have "{name.trim()}" in your pantry. Edit that item instead, or use a different
+          name if this is genuinely something else.
+        </div>
+      )}
+      {!isExactDupe && isFuzzyDupe && (
+        <div style={S.dupeWarning}>
+          You already have something similar to "{name.trim()}" in your pantry — you can still save this
+          as a separate item if you mean something different.
         </div>
       )}
 
       <label style={S.label}>Category</label>
       <div style={S.segment}>
-        {["staple", "fresh", "spice"].map((c) => (
+        {["staple", "fresh", "spice", "freezer"].map((c) => (
           <button
             key={c}
             onClick={() => setCategory(c)}
             style={{ ...S.segmentBtn, ...(category === c ? S.segmentActive : {}) }}
           >
-            {c === "staple" ? "Staple (2mo+)" : c === "fresh" ? "Fresh" : "Spice"}
+            {c === "staple" ? "Staple (2mo+)" : c === "fresh" ? "Fresh" : c === "spice" ? "Spice" : "Freezer"}
           </button>
         ))}
       </div>
@@ -2304,6 +2447,22 @@ function EditItemModal({ item, items, onClose, onSave }) {
             style={S.input}
             value={staleDate}
             onChange={(e) => setStaleDate(e.target.value)}
+          />
+        </>
+      )}
+
+      {category === "freezer" && (
+        <>
+          <label style={S.label}>Use by (optional)</label>
+          <div style={S.pickerNote}>
+            Just a reference date — doesn't add itself to your list automatically. Use "Add to list" on
+            the item when you actually want more.
+          </div>
+          <input
+            type="date"
+            style={S.input}
+            value={freezeDate}
+            onChange={(e) => setFreezeDate(e.target.value)}
           />
         </>
       )}
@@ -2350,6 +2509,7 @@ function IngredientPicker({
   const staples = items.filter((i) => i.category === "staple");
   const fresh = items.filter((i) => i.category === "fresh");
   const spices = items.filter((i) => i.category === "spice");
+  const freezerItems = items.filter((i) => i.category === "freezer");
 
   const q = query.trim().toLowerCase();
   // keep already-selected items visible even if they don't match the current search
@@ -2358,6 +2518,7 @@ function IngredientPicker({
   const visibleStaples = staples.filter(matchesQuery);
   const visibleFresh = fresh.filter(matchesQuery);
   const visibleSpices = spices.filter(matchesQuery);
+  const visibleFreezer = freezerItems.filter(matchesQuery);
 
   function setQty(key, qty) {
     setAmounts((a) => ({ ...a, [key]: { ...(typeof a[key] === "object" ? a[key] : {}), qty } }));
@@ -2491,10 +2652,15 @@ function IngredientPicker({
       {renderGroup("Staples", visibleStaples)}
       {renderGroup("Fresh", visibleFresh)}
       {renderGroup("Spices", visibleSpices)}
+      {renderGroup("Freezer", visibleFreezer)}
 
-      {q && visibleStaples.length === 0 && visibleFresh.length === 0 && visibleSpices.length === 0 && (
-        <div style={S.pickerNote}>No pantry items match "{query}".</div>
-      )}
+      {q &&
+        visibleStaples.length === 0 &&
+        visibleFresh.length === 0 &&
+        visibleSpices.length === 0 &&
+        visibleFreezer.length === 0 && (
+          <div style={S.pickerNote}>No pantry items match "{query}".</div>
+        )}
 
       <label style={S.label}>Other ingredients (optional)</label>
       <div style={S.pickerNote}>
@@ -2557,13 +2723,13 @@ function IngredientPicker({
             when you actually shop for it):
           </div>
           <div style={S.segment}>
-            {["staple", "fresh", "spice"].map((c) => (
+            {["staple", "fresh", "spice", "freezer"].map((c) => (
               <button
                 key={c}
                 onClick={() => setQaCategory(c)}
                 style={{ ...S.segmentBtn, ...(qaCategory === c ? S.segmentActive : {}) }}
               >
-                {c === "staple" ? "Staple (2mo+)" : c === "fresh" ? "Fresh" : "Spice"}
+                {c === "staple" ? "Staple (2mo+)" : c === "fresh" ? "Fresh" : c === "spice" ? "Spice" : "Freezer"}
               </button>
             ))}
           </div>
@@ -2623,13 +2789,13 @@ function FreeIngredientRow({ name, isOptional, amount, onNameChange, onQtyChange
       <div style={S.freeIngredientRow}>
         <div style={S.listName}>Add "{name}" to your pantry (you'll set a date when you shop for it):</div>
         <div style={S.segment}>
-          {["staple", "fresh", "spice"].map((c) => (
+          {["staple", "fresh", "spice", "freezer"].map((c) => (
             <button
               key={c}
               onClick={() => setCategory(c)}
               style={{ ...S.segmentBtn, ...(category === c ? S.segmentActive : {}) }}
             >
-              {c === "staple" ? "Staple (2mo+)" : c === "fresh" ? "Fresh" : "Spice"}
+              {c === "staple" ? "Staple (2mo+)" : c === "fresh" ? "Fresh" : c === "spice" ? "Spice" : "Freezer"}
             </button>
           ))}
         </div>
@@ -2984,9 +3150,10 @@ function AddRecipeModal({ items, recipes, onClose, onSave, onCreateItem, initial
     });
   }
 
-  const isDupe = isDuplicateName(name, recipes);
+  const isExactDupe = isExactDuplicate(name, recipes);
   const canSave =
     name.trim() &&
+    !isExactDupe &&
     (picked.length > 0 || freeIngredients.length > 0 || optionalPicked.length > 0 || optionalFreeIngredients.length > 0);
 
   return (
@@ -3004,9 +3171,9 @@ function AddRecipeModal({ items, recipes, onClose, onSave, onCreateItem, initial
         onChange={(e) => setName(e.target.value)}
         placeholder="e.g. Rice and beans"
       />
-      {isDupe && (
+      {isExactDupe && (
         <div style={S.dupeWarning}>
-          You already have a recipe named "{name.trim()}" — you can still save this as a separate recipe.
+          You already have a recipe named "{name.trim()}". Edit that one instead, or use a different name.
         </div>
       )}
 
@@ -3344,18 +3511,19 @@ function RecipeEditModal({ recipe, items, recipes, onClose, onSave, onDelete, on
     });
   }
 
-  const isDupe = isDuplicateName(name, recipes, recipe.id);
+  const isExactDupe = isExactDuplicate(name, recipes, recipe.id);
   const canSave =
     name.trim() &&
+    !isExactDupe &&
     (picked.length > 0 || freeIngredients.length > 0 || optionalPicked.length > 0 || optionalFreeIngredients.length > 0);
 
   return (
     <Modal onClose={onClose} title="Edit recipe">
       <label style={S.label}>Recipe name</label>
       <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} />
-      {isDupe && (
+      {isExactDupe && (
         <div style={S.dupeWarning}>
-          You already have a recipe named "{name.trim()}" — you can still save this as a separate recipe.
+          You already have a recipe named "{name.trim()}". Edit that one instead, or use a different name.
         </div>
       )}
 
@@ -3507,7 +3675,8 @@ const S = {
     background: "#EDE6D6",
     color: "#2B2A25",
     fontFamily: FONT.body,
-    paddingBottom: "80px",
+    paddingTop: "env(safe-area-inset-top)",
+    paddingBottom: "calc(80px + env(safe-area-inset-bottom))",
   },
   header: {
     padding: "28px 20px 12px",
@@ -3813,7 +3982,7 @@ const S = {
   },
   fab: {
     position: "fixed",
-    bottom: "24px",
+    bottom: "calc(24px + env(safe-area-inset-bottom))",
     right: "24px",
     width: "52px",
     height: "52px",
@@ -3824,6 +3993,21 @@ const S = {
     lineHeight: "52px",
     textAlign: "center",
     boxShadow: "0 4px 14px rgba(43,42,37,0.35)",
+  },
+  settingsFab: {
+    position: "fixed",
+    bottom: "calc(24px + env(safe-area-inset-bottom))",
+    left: "24px",
+    width: "48px",
+    height: "48px",
+    borderRadius: "50%",
+    background: "#EDE6D6",
+    border: "1px solid #C9BFA8",
+    color: "#8A7F68",
+    fontSize: "20px",
+    lineHeight: "46px",
+    textAlign: "center",
+    boxShadow: "0 4px 14px rgba(43,42,37,0.2)",
   },
   empty: {
     fontFamily: FONT.body,
