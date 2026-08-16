@@ -2500,25 +2500,16 @@ function IngredientPicker({
   amounts,
   setAmounts,
 }) {
-  const [freeInput, setFreeInput] = useState("");
-  const [freeMatch, setFreeMatch] = useState(null);
-  const [pendingNoMatch, setPendingNoMatch] = useState(null);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [qaCategory, setQaCategory] = useState("staple");
   const [query, setQuery] = useState("");
-  const staples = items.filter((i) => i.category === "staple");
-  const fresh = items.filter((i) => i.category === "fresh");
-  const spices = items.filter((i) => i.category === "spice");
-  const freezerItems = items.filter((i) => i.category === "freezer");
 
-  const q = query.trim().toLowerCase();
-  // keep already-selected items visible even if they don't match the current search
+  const q = query.trim();
+  const ql = q.toLowerCase();
   const isSelected = (item) => picked.includes(item.id) || optionalPicked.includes(item.id);
-  const matchesQuery = (item) => !q || item.name.toLowerCase().includes(q) || isSelected(item);
-  const visibleStaples = staples.filter(matchesQuery);
-  const visibleFresh = fresh.filter(matchesQuery);
-  const visibleSpices = spices.filter(matchesQuery);
-  const visibleFreezer = freezerItems.filter(matchesQuery);
+  const directMatches = q ? items.filter((i) => !isSelected(i) && i.name.toLowerCase().includes(ql)) : [];
+  const fuzzy = q && directMatches.length === 0 ? findSimilarItem(q, items) : null;
+  const trulyNotFound = !!q && directMatches.length === 0 && !fuzzy;
 
   function setQty(key, qty) {
     setAmounts((a) => ({ ...a, [key]: { ...(typeof a[key] === "object" ? a[key] : {}), qty } }));
@@ -2533,194 +2524,152 @@ function IngredientPicker({
     return { qty: a.qty || "", unit: a.unit || "" };
   }
 
-  function resetFreeFlow() {
-    setFreeInput("");
-    setFreeMatch(null);
-    setPendingNoMatch(null);
+  function handleQueryChange(val) {
+    setQuery(val);
     setShowQuickAdd(false);
-    setQaCategory("staple");
   }
 
-  function handleAddFree() {
-    const name = freeInput.trim();
-    if (!name) return;
-    const found = findSimilarItem(name, items);
-    if (found) {
-      setFreeMatch(found);
-      setPendingNoMatch(null);
-    } else {
-      setPendingNoMatch(name);
-      setFreeMatch(null);
-    }
+  function selectMatch(item) {
+    onUseExisting(item.id);
+    setQuery("");
+    setShowQuickAdd(false);
   }
 
-  function useMatchInstead() {
-    onUseExisting(freeMatch.item.id);
-    resetFreeFlow();
+  function useFuzzyMatch() {
+    onUseExisting(fuzzy.item.id);
+    setQuery("");
+    setShowQuickAdd(false);
   }
 
-  function addFreeAnyway(name) {
-    onAddFree(capitalize(name));
-    resetFreeFlow();
+  function addAsUntracked() {
+    onAddFree(capitalize(q));
+    setQuery("");
+    setShowQuickAdd(false);
   }
 
   function confirmQuickAdd() {
     // no date asked here — you don't have it yet, so there's nothing to date.
     // it gets set the first time you restock it after shopping.
     const fields = {
-      name: capitalize(pendingNoMatch),
+      name: capitalize(q),
       category: qaCategory,
       expiryDate: "",
       shelfLifeDays: null,
       staleDate: "",
+      freezeDate: "",
       available: false,
     };
     const newId = onCreateItem(fields);
     onUseExisting(newId);
-    resetFreeFlow();
+    setQuery("");
+    setShowQuickAdd(false);
+    setQaCategory("staple");
   }
 
-  function renderGroup(label, groupItems) {
-    if (groupItems.length === 0) return null;
-    return (
-      <div key={label}>
-        <div style={S.pickerGroupLabel}>{label}</div>
-        <div style={S.pickerList}>
-          {groupItems.map((item) => {
-            const included = picked.includes(item.id) || optionalPicked.includes(item.id);
-            const isOptional = optionalPicked.includes(item.id);
-            const amt = amountFor(item.id);
-            return (
-              <label key={item.id} style={S.pickerRow}>
-                <input type="checkbox" checked={included} onChange={() => onToggleInclude(item.id)} />
-                {included && (
-                  <>
-                    <input
-                      style={S.qtyInput}
-                      value={amt.qty}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => setQty(item.id, e.target.value)}
-                      placeholder="qty"
-                    />
-                    <input
-                      style={S.unitInput}
-                      value={amt.unit}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => setUnit(item.id, e.target.value)}
-                      placeholder="unit"
-                    />
-                  </>
-                )}
-                <span style={{ flex: 1 }}>{item.name}</span>
-                {included && (
-                  <span
-                    style={{ ...S.optionalInlineToggle, ...(isOptional ? S.optionalInlineToggleActive : {}) }}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      onToggleOptionalFlag(item.id);
-                    }}
-                  >
-                    optional
-                  </span>
-                )}
-              </label>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
+  const selectedTracked = [
+    ...picked.map((id) => ({ id, isOptional: false })),
+    ...optionalPicked.map((id) => ({ id, isOptional: true })),
+  ];
 
   return (
     <>
-      <label style={S.label}>Ingredients — pick from your pantry</label>
+      <label style={S.label}>Ingredients</label>
       <div style={S.pickerNote}>
-        Only tracked items can be picked here — that's what lets the light stay accurate. Amounts are for
-        your own reference while cooking and don't affect tracking. Check "optional" on anything that
+        Search your pantry to add ingredients — nothing shows until you search, so a big pantry doesn't
+        turn this into a scroll. Not found? You can add it on the spot. Mark "optional" on anything that
         shouldn't block the recipe from being ready.
       </div>
 
-      {items.length > 8 && (
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search your pantry…"
-          style={{ ...S.input, marginBottom: "8px" }}
-        />
+      {selectedTracked.length > 0 && (
+        <div style={S.pickerList}>
+          {selectedTracked.map(({ id, isOptional }) => {
+            const item = items.find((i) => i.id === id);
+            const amt = amountFor(id);
+            return (
+              <div key={id} style={S.pickerRow}>
+                <input
+                  style={S.qtyInput}
+                  value={amt.qty}
+                  onChange={(e) => setQty(id, e.target.value)}
+                  placeholder="qty"
+                />
+                <input
+                  style={S.unitInput}
+                  value={amt.unit}
+                  onChange={(e) => setUnit(id, e.target.value)}
+                  placeholder="unit"
+                />
+                <span style={{ flex: 1 }}>{item ? item.name : "(removed)"}</span>
+                <span
+                  style={{ ...S.optionalInlineToggle, ...(isOptional ? S.optionalInlineToggleActive : {}) }}
+                  onClick={() => onToggleOptionalFlag(id)}
+                >
+                  optional
+                </span>
+                <button style={S.chipRemove} onClick={() => onToggleInclude(id)}>
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
       )}
 
-      {renderGroup("Staples", visibleStaples)}
-      {renderGroup("Fresh", visibleFresh)}
-      {renderGroup("Spices", visibleSpices)}
-      {renderGroup("Freezer", visibleFreezer)}
+      <input
+        value={query}
+        onChange={(e) => handleQueryChange(e.target.value)}
+        placeholder="Search or add an ingredient…"
+        style={{ ...S.input, marginBottom: "8px" }}
+      />
 
-      {q &&
-        visibleStaples.length === 0 &&
-        visibleFresh.length === 0 &&
-        visibleSpices.length === 0 &&
-        visibleFreezer.length === 0 && (
-          <div style={S.pickerNote}>No pantry items match "{query}".</div>
-        )}
+      {q && directMatches.length > 0 && (
+        <div style={S.pickerList}>
+          {directMatches.map((item) => (
+            <button key={item.id} style={S.searchResultRow} onClick={() => selectMatch(item)}>
+              <span>{item.name}</span>
+              <span style={S.tagAuto}>{item.category}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
-      <label style={S.label}>Other ingredients (optional)</label>
-      <div style={S.pickerNote}>
-        Not tracked in your pantry — treated as not-in-stock, so a recipe with any of these can't show ready until you track it or remove it.
-      </div>
-      <div style={S.addRow}>
-        <input
-          value={freeInput}
-          onChange={(e) => {
-            setFreeInput(e.target.value);
-            if (freeMatch) setFreeMatch(null);
-            if (pendingNoMatch) setPendingNoMatch(null);
-            if (showQuickAdd) setShowQuickAdd(false);
-          }}
-          onKeyDown={(e) => e.key === "Enter" && handleAddFree()}
-          placeholder="e.g. salt, pepper"
-          style={S.input}
-        />
-        <button style={S.smallBtn} onClick={handleAddFree}>
-          Add
-        </button>
-      </div>
-
-      {freeMatch && (
+      {q && directMatches.length === 0 && fuzzy && !showQuickAdd && (
         <div style={S.matchBanner}>
           <div style={S.matchText}>
-            Looks like you already track <strong>{freeMatch.item.name}</strong> — check it above instead?
+            Looks like you already track <strong>{fuzzy.item.name}</strong> — use that?
           </div>
           <div style={S.matchBtnRow}>
-            <button style={S.confirmDeleteBtn} onClick={useMatchInstead}>
+            <button style={S.confirmDeleteBtn} onClick={useFuzzyMatch}>
               Use that instead
             </button>
-            <button style={S.confirmCancelBtn} onClick={() => addFreeAnyway(freeInput.trim())}>
-              Add as untracked anyway
+            <button style={S.confirmCancelBtn} onClick={() => setShowQuickAdd(true)}>
+              No, add "{q}" separately
             </button>
           </div>
         </div>
       )}
 
-      {pendingNoMatch && !showQuickAdd && (
+      {trulyNotFound && !showQuickAdd && (
         <div style={S.matchBanner}>
           <div style={S.matchText}>
-            <strong>{pendingNoMatch}</strong> isn't in your pantry yet.
+            <strong>{q}</strong> isn't in your pantry yet.
           </div>
           <div style={S.matchBtnRow}>
             <button style={S.confirmDeleteBtn} onClick={() => setShowQuickAdd(true)}>
               Add to pantry
             </button>
-            <button style={S.confirmCancelBtn} onClick={() => addFreeAnyway(pendingNoMatch)}>
+            <button style={S.confirmCancelBtn} onClick={addAsUntracked}>
               Use as untracked
             </button>
           </div>
         </div>
       )}
 
-      {pendingNoMatch && showQuickAdd && (
+      {showQuickAdd && q && directMatches.length === 0 && (
         <div style={S.matchBanner}>
           <div style={S.matchText}>
-            Add <strong>{pendingNoMatch}</strong> to your pantry (marked not-in-stock — you'll set a date
-            when you actually shop for it):
+            Add <strong>{q}</strong> to your pantry (marked not-in-stock — you'll set a date when you
+            actually shop for it):
           </div>
           <div style={S.segment}>
             {["staple", "fresh", "spice", "freezer"].map((c) => (
@@ -4312,6 +4261,20 @@ const S = {
     alignItems: "center",
     gap: "8px",
     fontSize: "13px",
+  },
+  searchResultRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    width: "100%",
+    background: "#F5F0E4",
+    border: "1px solid #C9BFA8",
+    borderRadius: "8px",
+    padding: "10px 12px",
+    fontSize: "13px",
+    color: "#2B2A25",
+    textAlign: "left",
+    marginBottom: "6px",
   },
   optionalInlineToggle: {
     fontSize: "10px",
