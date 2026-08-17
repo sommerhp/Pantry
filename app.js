@@ -392,6 +392,23 @@ function missingCoverage(status, shoppingList) {
   return requiredCovered && freeCovered;
 }
 
+// per-ingredient status for the recipe view: green = in stock, orange = missing but
+// already on the shopping list, red = missing and not on the list yet
+function ingredientStatusColor(item, freeName, shoppingList) {
+  if (item) {
+    if (!isItemMissing(item)) return "#4C6B4F";
+    const onList = shoppingList.some((s) => s.linkedItemId === item.id && !s.bought);
+    return onList ? "#B5824A" : "#B5482F";
+  }
+  if (freeName) {
+    const onList = shoppingList.some(
+      (s) => !s.linkedItemId && !s.bought && normalizeName(s.name) === normalizeName(freeName)
+    );
+    return onList ? "#B5824A" : "#B5482F";
+  }
+  return "#B5482F"; // removed ingredient — nothing to link, treat as missing
+}
+
 function PantryKeeper() {
   const [data, setData] = useState(emptyData);
   const [loaded, setLoaded] = useState(false);
@@ -994,19 +1011,24 @@ function PantryTab({
   const [query, setQuery] = useState("");
   const [usedUpOpen, setUsedUpOpen] = useState(false);
   const [spicesOpen, setSpicesOpen] = useState(false);
+  const [freezerUsedUpOpen, setFreezerUsedUpOpen] = useState(false);
   const q = query.trim().toLowerCase();
 
   const availableFresh = fresh.filter((i) => i.available);
   const usedUpFresh = fresh.filter((i) => !i.available);
+  const availableFreezer = freezer.filter((i) => i.available);
+  const usedUpFreezer = freezer.filter((i) => !i.available);
 
   const visibleAvailableFresh = q ? availableFresh.filter((i) => i.name.toLowerCase().includes(q)) : availableFresh;
   const visibleUsedUpFresh = q ? usedUpFresh.filter((i) => i.name.toLowerCase().includes(q)) : usedUpFresh;
   const visibleStaples = q ? staples.filter((i) => i.name.toLowerCase().includes(q)) : staples;
   const visibleSpices = q ? spices.filter((i) => i.name.toLowerCase().includes(q)) : spices;
-  const visibleFreezer = q ? freezer.filter((i) => i.name.toLowerCase().includes(q)) : freezer;
+  const visibleAvailableFreezer = q ? availableFreezer.filter((i) => i.name.toLowerCase().includes(q)) : availableFreezer;
+  const visibleUsedUpFreezer = q ? usedUpFreezer.filter((i) => i.name.toLowerCase().includes(q)) : usedUpFreezer;
   const showSearch = fresh.length + staples.length + spices.length + freezer.length > 10;
   const showUsedUpSection = usedUpOpen || (!!q && visibleUsedUpFresh.length > 0);
   const showSpicesSection = spicesOpen || (!!q && visibleSpices.length > 0);
+  const showFreezerUsedUpSection = freezerUsedUpOpen || (!!q && visibleUsedUpFreezer.length > 0);
 
   const isOnList = (id) => shoppingList.some((s) => s.linkedItemId === id && !s.bought);
 
@@ -1090,13 +1112,13 @@ function PantryTab({
       )}
 
       <SectionHead title="Freezer" sub="optional use-by date — add to list is manual, not automatic" accent="#4C6B4F" />
-      {visibleFreezer.length === 0 ? (
+      {visibleAvailableFreezer.length === 0 ? (
         <EmptyRow
           text={q ? `No freezer items match "${query}".` : "Nothing in the freezer tracked yet."}
         />
       ) : (
         <div style={S.grid}>
-          {visibleFreezer.map((item) => (
+          {visibleAvailableFreezer.map((item) => (
             <FreezerCard
               key={item.id}
               item={item}
@@ -1109,6 +1131,30 @@ function PantryTab({
           ))}
         </div>
       )}
+
+      <div style={S.usedUpSection}>
+        <button style={S.collapsibleHeader} onClick={() => setFreezerUsedUpOpen((o) => !o)}>
+          {showFreezerUsedUpSection ? "▾" : "▸"} Used up ({usedUpFreezer.length})
+        </button>
+        {showFreezerUsedUpSection &&
+          (visibleUsedUpFreezer.length === 0 ? (
+            <div style={S.pickerNote}>No used-up items match "{query}".</div>
+          ) : (
+            <ul style={S.list}>
+              {visibleUsedUpFreezer.map((item) => (
+                <UsedUpFreezerRow
+                  key={item.id}
+                  item={item}
+                  onToggleAvailable={onToggleAvailable}
+                  onAddToList={onAddFreshToList}
+                  isOnList={isOnList(item.id)}
+                  onEdit={onEdit}
+                  onRemove={onRemove}
+                />
+              ))}
+            </ul>
+          ))}
+      </div>
 
       <div style={S.usedUpSection}>
         <button style={S.collapsibleHeader} onClick={() => setSpicesOpen((o) => !o)}>
@@ -1780,6 +1826,51 @@ function FreshCard({ item, onMarkUsedUp, onAddToList, isOnList, onEdit, onRemove
         </button>
       </div>
     </div>
+  );
+}
+
+function UsedUpFreezerRow({ item, onToggleAvailable, onAddToList, isOnList, onEdit, onRemove }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  if (confirmDelete) {
+    return (
+      <li style={S.restockRow}>
+        <div style={S.listName}>Remove {item.name} from your pantry?</div>
+        <div style={S.cardBtnRow}>
+          <button style={{ ...S.lowBtn, flex: 1 }} onClick={() => onRemove(item.id)}>
+            Yes, delete
+          </button>
+          <button style={{ ...S.lowBtn, flex: 1 }} onClick={() => setConfirmDelete(false)}>
+            Cancel
+          </button>
+        </div>
+      </li>
+    );
+  }
+
+  return (
+    <li style={S.listRow}>
+      <button
+        style={S.checkbox}
+        onClick={() => onToggleAvailable(item.id)}
+        aria-label="Mark available again"
+        title="Available again"
+      />
+      <span style={S.listName}>{item.name}</span>
+      {isOnList ? (
+        <span style={S.tagAuto}>on list</span>
+      ) : (
+        <button style={S.smallBtn} onClick={() => onAddToList(item.id)}>
+          Add to list
+        </button>
+      )}
+      <button style={S.editBtn} onClick={() => onEdit(item.id)} aria-label="Edit">
+        ✎
+      </button>
+      <button style={S.removeBtn} onClick={() => setConfirmDelete(true)} aria-label="Remove">
+        ×
+      </button>
+    </li>
   );
 }
 
@@ -2592,12 +2683,14 @@ function IngredientPicker({
                   value={amt.qty}
                   onChange={(e) => setQty(id, e.target.value)}
                   placeholder="qty"
+                  autoCapitalize="none"
                 />
                 <input
                   style={S.unitInput}
                   value={amt.unit}
                   onChange={(e) => setUnit(id, e.target.value)}
                   placeholder="unit"
+                  autoCapitalize="none"
                 />
                 <span style={{ flex: 1 }}>{item ? item.name : "(removed)"}</span>
                 <span
@@ -2768,8 +2861,8 @@ function FreeIngredientRow({ name, isOptional, amount, onNameChange, onQtyChange
 
   return (
     <div style={S.freeIngredientRow}>
-      <input style={S.qtyInput} value={amount.qty} onChange={(e) => onQtyChange(e.target.value)} placeholder="qty" />
-      <input style={S.unitInput} value={amount.unit} onChange={(e) => onUnitChange(e.target.value)} placeholder="unit" />
+      <input style={S.qtyInput} value={amount.qty} onChange={(e) => onQtyChange(e.target.value)} placeholder="qty" autoCapitalize="none" />
+      <input style={S.unitInput} value={amount.unit} onChange={(e) => onUnitChange(e.target.value)} placeholder="unit" autoCapitalize="none" />
       <input style={S.freeNameInput} value={name} onChange={(e) => onNameChange(e.target.value)} />
       <span
         style={{ ...S.optionalInlineToggle, ...(isOptional ? S.optionalInlineToggleActive : {}) }}
@@ -3238,16 +3331,28 @@ function RecipeViewModal({ recipe, items, shoppingList, onClose, onEdit, onAddMi
       key: effectiveIngredientIds[idx],
       name: item ? item.name : "(removed)",
       amount: amounts[effectiveIngredientIds[idx]],
+      color: ingredientStatusColor(item, null, shoppingList),
     })),
-    ...freeIngredients.map((name) => ({ key: `free:${name}`, name, amount: amounts[`free:${name}`] })),
+    ...freeIngredients.map((name) => ({
+      key: `free:${name}`,
+      name,
+      amount: amounts[`free:${name}`],
+      color: ingredientStatusColor(null, name, shoppingList),
+    })),
   ];
   const optionalList = [
     ...optionalResolved.map((item, idx) => ({
       key: effectiveOptionalIngredientIds[idx],
       name: item ? item.name : "(removed)",
       amount: amounts[effectiveOptionalIngredientIds[idx]],
+      color: ingredientStatusColor(item, null, shoppingList),
     })),
-    ...optionalFreeIngredients.map((name) => ({ key: `free:${name}`, name, amount: amounts[`free:${name}`] })),
+    ...optionalFreeIngredients.map((name) => ({
+      key: `free:${name}`,
+      name,
+      amount: amounts[`free:${name}`],
+      color: ingredientStatusColor(null, name, shoppingList),
+    })),
   ];
 
   function handleAddMissingClick() {
@@ -3297,6 +3402,7 @@ function RecipeViewModal({ recipe, items, shoppingList, onClose, onEdit, onAddMi
       <ul style={S.list}>
         {requiredList.map((ref) => (
           <li key={ref.key} style={S.listRow}>
+            <span style={{ ...S.statusDot, background: ref.color, marginTop: 0 }} />
             <span style={S.listName}>{ref.name}</span>
             {ref.amount && <span style={S.amountBadge}>{scaledDisplay(ref.amount)}</span>}
           </li>
@@ -3309,6 +3415,7 @@ function RecipeViewModal({ recipe, items, shoppingList, onClose, onEdit, onAddMi
           <ul style={S.list}>
             {optionalList.map((ref) => (
               <li key={ref.key} style={S.listRow}>
+                <span style={{ ...S.statusDot, background: ref.color, marginTop: 0 }} />
                 <span style={S.listName}>{ref.name}</span>
                 {ref.amount && <span style={S.amountBadge}>{scaledDisplay(ref.amount)}</span>}
               </li>
