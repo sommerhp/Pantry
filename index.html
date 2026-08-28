@@ -28,48 +28,68 @@
 
 <div id="root"><div id="boot-fallback">loading pantry…</div></div>
 
-<!-- Storage shim: swaps Claude Artifact's window.storage for plain browser localStorage.
-     Defined before anything else runs so app.js's window.storage.get/set calls work unchanged. -->
+<!-- Supabase client library, vendored locally like React/Babel below -->
+<script src="vendor/supabase.js"></script>
+
+<!-- ============================================================
+     PASTE YOUR OWN VALUES HERE — from Supabase: Settings > API Keys
+     (or the "Connect" button on your project's dashboard)
+     ============================================================ -->
+<script>
+  const SUPABASE_URL = "PASTE_YOUR_PROJECT_URL_HERE";
+  const SUPABASE_KEY = "PASTE_YOUR_ANON_OR_PUBLISHABLE_KEY_HERE";
+  const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+</script>
+
+<!-- Storage shim: the app's own code only ever calls window.storage.get/set with one
+     key ("pantry-data") — this routes that through to the current household's row in
+     Supabase instead of local storage, so app.js itself never has to know the difference. -->
 <script>
   window.storage = {
     async get(key) {
+      const householdId = window.currentHouseholdId;
+      if (!householdId) return null;
       try {
-        const v = localStorage.getItem(key);
-        if (v === null) return null;
-        return { key, value: v };
+        const { data, error } = await supabaseClient
+          .from("household_data")
+          .select("data")
+          .eq("household_id", householdId)
+          .maybeSingle();
+        if (error || !data) return null;
+        return { key, value: JSON.stringify(data.data) };
       } catch (e) {
         return null;
       }
     },
     async set(key, value) {
-      try {
-        localStorage.setItem(key, value);
-      } catch (e) {
-        throw e; // let the app's own error banner surface storage failures (e.g. quota)
-      }
+      const householdId = window.currentHouseholdId;
+      if (!householdId) throw new Error("No household selected");
+      const parsed = JSON.parse(value);
+      const { error } = await supabaseClient
+        .from("household_data")
+        .upsert({ household_id: householdId, data: parsed, updated_at: new Date().toISOString() });
+      if (error) throw error;
       return { key, value };
     },
     async delete(key) {
-      localStorage.removeItem(key);
       return { key, deleted: true };
     },
     async list(prefix) {
-      const keys = Object.keys(localStorage).filter((k) => !prefix || k.startsWith(prefix));
-      return { keys };
+      return { keys: [] };
     },
   };
 </script>
 
-<!-- React + Babel from CDN — no build step needed for this phase -->
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<!-- React + Babel, vendored locally (not CDN) so the app fully loads offline -->
+<script src="vendor/react.production.min.js"></script>
+<script src="vendor/react-dom.production.min.js"></script>
+<script src="vendor/babel.min.js"></script>
 
 <script type="text/babel" src="app.js"></script>
 <script type="text/babel">
   const container = document.getElementById("root");
   const root = ReactDOM.createRoot(container);
-  root.render(<PantryKeeper />);
+  root.render(<AppRoot />);
 </script>
 
 <script>
