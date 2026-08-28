@@ -28,6 +28,35 @@
 
 <div id="root"><div id="boot-fallback">loading pantry…</div></div>
 
+<!-- Surfaces the real error text on screen instead of a silent failure — this must load
+     first, before anything else has a chance to throw. -->
+<script>
+  function showBootError(text) {
+    const el = document.getElementById("boot-fallback");
+    if (!el) return;
+    el.style.whiteSpace = "pre-wrap";
+    el.style.textAlign = "left";
+    el.style.alignItems = "flex-start";
+    el.style.padding = "20px";
+    el.style.fontSize = "11px";
+    el.style.color = "#B5482F";
+    el.textContent = text;
+  }
+  window.addEventListener("error", (e) => {
+    const err = e.error;
+    showBootError(
+      "Script error: " + (err && err.message ? err.message : e.message || "unknown") +
+      (err && err.stack ? "\n\n" + err.stack : "")
+    );
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    const reason = e.reason;
+    const msg = reason && reason.message ? reason.message : String(reason);
+    const stack = reason && reason.stack ? reason.stack : "";
+    showBootError("Unhandled error: " + msg + (stack ? "\n\n" + stack : ""));
+  });
+</script>
+
 <!-- Supabase client library, vendored locally like React/Babel below -->
 <script src="vendor/supabase.js"></script>
 
@@ -89,7 +118,7 @@
 <script type="text/babel">
   const container = document.getElementById("root");
   const root = ReactDOM.createRoot(container);
-  root.render(<AppRoot />);
+  root.render(<ErrorBoundary><AppRoot /></ErrorBoundary>);
 </script>
 
 <script>
