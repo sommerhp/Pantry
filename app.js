@@ -391,22 +391,88 @@ function ingredientStatusColor(item, freeName, shoppingList) {
   return "#B5482F"; // removed ingredient — nothing to link, treat as missing
 }
 
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          style={{
+            padding: "20px",
+            fontFamily: "monospace",
+            fontSize: "11px",
+            color: "#B5482F",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          <div style={{ fontWeight: "bold", marginBottom: "10px" }}>
+            Something broke — here's the exact error (screenshot this):
+          </div>
+          {this.state.error.message}
+          {"\n\n"}
+          {this.state.error.stack}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function AppRoot() {
   const [session, setSession] = useState(undefined); // undefined = checking, null = logged out
   const [householdId, setHouseholdId] = useState(undefined); // undefined = checking, null = none yet
+  const [bootError, setBootError] = useState("");
 
   useEffect(() => {
-    supabaseClient.auth.getSession().then(({ data }) => setSession(data.session || null));
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      setBootError(
+        "This is taking too long to respond. Check your internet connection, and double-check the " +
+          "Supabase URL and key pasted into index.html are exactly right — no missing characters, no " +
+          "extra spaces, and the URL starts with https:// and ends in .supabase.co."
+      );
+    }, 8000);
+
+    supabaseClient.auth
+      .getSession()
+      .then(({ data }) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        setSession(data.session || null);
+      })
+      .catch((e) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        setBootError("Couldn't check login status: " + (e.message || String(e)));
+      });
     const { data: listener } = supabaseClient.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
       if (!newSession) setHouseholdId(undefined);
     });
-    return () => listener.subscription.unsubscribe();
+    return () => {
+      clearTimeout(timeout);
+      listener.subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
     if (!session) return;
     let cancelled = false;
+    const timeout = setTimeout(() => {
+      if (cancelled) return;
+      cancelled = true;
+      setBootError("Looking up your household is taking too long. Check your internet connection and try reopening the app.");
+    }, 8000);
     supabaseClient
       .from("household_members")
       .select("household_id")
@@ -414,16 +480,33 @@ function AppRoot() {
       .limit(1)
       .then(({ data, error }) => {
         if (cancelled) return;
-        if (error || !data || data.length === 0) {
-          setHouseholdId(null);
-        } else {
-          setHouseholdId(data[0].household_id);
+        cancelled = true;
+        clearTimeout(timeout);
+        if (error) {
+          setBootError("Couldn't load your household: " + error.message);
+          return;
         }
+        setHouseholdId(data && data.length > 0 ? data[0].household_id : null);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        cancelled = true;
+        clearTimeout(timeout);
+        setBootError("Couldn't load your household: " + (e.message || String(e)));
       });
     return () => {
       cancelled = true;
+      clearTimeout(timeout);
     };
   }, [session]);
+
+  if (bootError) {
+    return (
+      <div style={{ ...S.app, padding: "20px" }}>
+        <div style={{ ...S.dupeWarning, fontSize: "13px" }}>{bootError}</div>
+      </div>
+    );
+  }
 
   if (session === undefined) {
     return (
