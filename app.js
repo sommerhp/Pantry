@@ -10,24 +10,6 @@ const { useState, useEffect, useMemo } = React;
 // line:     #C9BFA8
 
 const STORAGE_KEY = "pantry-data";
-const API_KEY_STORAGE = "pantry-anthropic-key";
-
-function getApiKey() {
-  try {
-    return localStorage.getItem(API_KEY_STORAGE) || "";
-  } catch (e) {
-    return "";
-  }
-}
-
-function setStoredApiKey(key) {
-  try {
-    if (key) localStorage.setItem(API_KEY_STORAGE, key);
-    else localStorage.removeItem(API_KEY_STORAGE);
-  } catch (e) {
-    // ignore — worst case the key just doesn't persist
-  }
-}
 const DAY = 86400000;
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -417,8 +399,6 @@ function PantryKeeper() {
   const [editingItemId, setEditingItemId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showRecipe, setShowRecipe] = useState(false);
-  const [showImport, setShowImport] = useState(false);
-  const [importDraft, setImportDraft] = useState(null);
   const [openRecipeId, setOpenRecipeId] = useState(null);
   const [viewRecipeId, setViewRecipeId] = useState(null);
   const [manualItem, setManualItem] = useState("");
@@ -906,11 +886,7 @@ function PantryKeeper() {
             recipes={data.recipes}
             items={data.items}
             shoppingList={data.shoppingList}
-            onAdd={() => {
-              setImportDraft(null);
-              setShowRecipe(true);
-            }}
-            onImport={() => setShowImport(true)}
+            onAdd={() => setShowRecipe(true)}
             onRemove={removeRecipe}
             onAddMissing={addMissingToList}
             onAddOptional={addOptionalMissingToList}
@@ -935,26 +911,11 @@ function PantryKeeper() {
         />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-      {showImport && (
-        <ImportRecipeModal
-          items={data.items}
-          onClose={() => setShowImport(false)}
-          onImported={(draft) => {
-            setImportDraft(draft);
-            setShowImport(false);
-            setShowRecipe(true);
-          }}
-        />
-      )}
       {showRecipe && (
         <AddRecipeModal
           items={data.items}
           recipes={data.recipes}
-          initial={importDraft}
-          onClose={() => {
-            setShowRecipe(false);
-            setImportDraft(null);
-          }}
+          onClose={() => setShowRecipe(false)}
           onSave={addRecipe}
           onCreateItem={createPantryItem}
         />
@@ -1553,7 +1514,7 @@ function ShoppingRow({ entry, items, onToggleBought, onRestockFromList, onTrackE
   );
 }
 
-function RecipesTab({ recipes, items, shoppingList, onAdd, onImport, onRemove, onAddMissing, onAddOptional, onOpen }) {
+function RecipesTab({ recipes, items, shoppingList, onAdd, onRemove, onAddMissing, onAddOptional, onOpen }) {
   const [filterReady, setFilterReady] = useState(false);
   const [filterTag, setFilterTag] = useState(null);
   const [query, setQuery] = useState("");
@@ -1617,10 +1578,6 @@ function RecipesTab({ recipes, items, shoppingList, onAdd, onImport, onRemove, o
           ))}
         </div>
       )}
-
-      <button style={S.importLink} onClick={onImport}>
-        Import from photo or text
-      </button>
 
       {recipes.length > 6 && (
         <input
@@ -2173,25 +2130,12 @@ function RestockPrompt({ name, shelfLifeDays, onConfirm, onCancel }) {
 }
 
 function SettingsModal({ onClose }) {
-  const [key, setKey] = useState(getApiKey());
-  const [saved, setSaved] = useState(false);
   const [showBackup, setShowBackup] = useState(false);
   const [backupText, setBackupText] = useState("");
   const [copyMsg, setCopyMsg] = useState("");
   const [restoreText, setRestoreText] = useState("");
   const [restoreMsg, setRestoreMsg] = useState("");
   const [confirmRestore, setConfirmRestore] = useState(false);
-
-  function handleSave() {
-    setStoredApiKey(key.trim());
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
-  }
-
-  function handleClear() {
-    setKey("");
-    setStoredApiKey("");
-  }
 
   function openBackup() {
     let raw = "";
@@ -2293,30 +2237,6 @@ function SettingsModal({ onClose }) {
         </div>
       )}
       {restoreMsg && <div style={S.pickerNote}>{restoreMsg}</div>}
-
-      <label style={S.label}>Anthropic API key</label>
-      <div style={S.pickerNote}>
-        Needed only for the photo/text recipe import. Stored solely on this phone, in this browser — it
-        never leaves your device except when talking directly to Anthropic's API. Get one at{" "}
-        <strong>console.anthropic.com</strong> under API Keys, and set a spend limit there while you're at
-        it. Clearing this just disables import — everything else keeps working.
-      </div>
-      <input
-        type="password"
-        autoComplete="off"
-        style={S.input}
-        value={key}
-        onChange={(e) => setKey(e.target.value)}
-        placeholder="sk-ant-…"
-      />
-      <div style={S.cardBtnRow}>
-        <button style={{ ...S.primaryBtn, flex: 1 }} onClick={handleSave}>
-          {saved ? "Saved ✓" : "Save key"}
-        </button>
-        <button style={{ ...S.lowBtn, flex: 1 }} onClick={handleClear}>
-          Clear
-        </button>
-      </div>
     </Modal>
   );
 }
@@ -2880,170 +2800,6 @@ function FreeIngredientRow({ name, isOptional, amount, onNameChange, onQtyChange
   );
 }
 
-function ImportRecipeModal({ items, onClose, onImported }) {
-  const [mode, setMode] = useState("photo");
-  const [pastedText, setPastedText] = useState("");
-  const [imageData, setImageData] = useState(null); // { base64, mediaType, previewUrl }
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  function handleFileChange(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result;
-      const match = dataUrl.match(/^data:([^;]+);base64,(.*)$/);
-      if (!match) return;
-      setImageData({ mediaType: match[1], base64: match[2], previewUrl: dataUrl });
-    };
-    reader.readAsDataURL(file);
-  }
-
-  async function handleExtract() {
-    setLoading(true);
-    setError("");
-    try {
-      const apiKey = getApiKey();
-      if (!apiKey) {
-        setError("Add your Anthropic API key in Settings first — this feature needs one to work.");
-        setLoading(false);
-        return;
-      }
-
-      const system = `Extract a recipe and respond with ONLY JSON, no prose, no markdown fences. Schema:
-{"name": string, "yieldQty": number|null, "yieldLabel": string, "instructions": string, "ingredients": [{"name": string, "qty": string, "unit": string}]}
-Split quantity and unit into separate fields (e.g. qty:"2", unit:"cups"), never combined. Keep ingredient names short and generic (e.g. "garlic cloves", not "3 large cloves garlic, minced") so they can be matched against a pantry list. Do not translate anything — keep the recipe name, ingredient names, and instructions in whatever language they appear in the source. In "instructions", put each step on its own line (separated by \\n), without numbering them yourself. Use null/"" for anything you can't determine — never invent values.`;
-
-      const content =
-        mode === "photo"
-          ? [
-              { type: "image", source: { type: "base64", media_type: imageData.mediaType, data: imageData.base64 } },
-              { type: "text", text: "Extract this recipe." },
-            ]
-          : [{ type: "text", text: `Extract this recipe:\n\n${pastedText}` }];
-
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1200,
-          system,
-          messages: [{ role: "user", content }],
-        }),
-      });
-      if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error("Your API key was rejected — check it in Settings.");
-        }
-        throw new Error(`API request failed (${response.status})`);
-      }
-      const data = await response.json();
-      const textBlock = (data.content || []).find((b) => b.type === "text");
-      if (!textBlock) throw new Error("empty response");
-      const cleaned = textBlock.text.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(cleaned);
-
-      const picked = [];
-      const freeIngredients = [];
-      const amounts = {};
-      (parsed.ingredients || []).forEach((ing) => {
-        if (!ing.name) return;
-        const found = findSimilarItem(ing.name, items);
-        const hasAmount = ing.qty || ing.unit;
-        if (found) {
-          picked.push(found.item.id);
-          if (hasAmount) amounts[found.item.id] = { qty: ing.qty || "", unit: ing.unit || "" };
-        } else {
-          const displayName = capitalize(ing.name);
-          freeIngredients.push(displayName);
-          if (hasAmount) amounts[`free:${displayName}`] = { qty: ing.qty || "", unit: ing.unit || "" };
-        }
-      });
-
-      onImported({
-        name: parsed.name || "",
-        picked,
-        freeIngredients,
-        amounts,
-        yieldQty: parsed.yieldQty || null,
-        yieldLabel: parsed.yieldLabel || "",
-        instructions: parsed.instructions || "",
-        source: mode === "photo" ? "photo" : "pasted text",
-      });
-    } catch (e) {
-      if (e.message && (e.message.includes("API key") || e.message.includes("API request failed"))) {
-        setError(e.message);
-      } else {
-        setError("Couldn't read that recipe — try a clearer photo, or enter it manually.");
-      }
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const canExtract = !loading && (mode === "photo" ? !!imageData : pastedText.trim().length > 10);
-
-  return (
-    <Modal onClose={onClose} title="Import recipe">
-      <div style={S.segment}>
-        <button
-          onClick={() => setMode("photo")}
-          style={{ ...S.segmentBtn, ...(mode === "photo" ? S.segmentActive : {}) }}
-        >
-          From photo
-        </button>
-        <button
-          onClick={() => setMode("paste")}
-          style={{ ...S.segmentBtn, ...(mode === "paste" ? S.segmentActive : {}) }}
-        >
-          Paste text
-        </button>
-      </div>
-
-      {mode === "photo" ? (
-        <>
-          <label style={S.label}>Recipe photo</label>
-          <input type="file" accept="image/*" onChange={handleFileChange} style={S.input} />
-          {imageData && (
-            <img src={imageData.previewUrl} alt="Recipe preview" style={S.importPreview} />
-          )}
-        </>
-      ) : (
-        <>
-          <label style={S.label}>Paste recipe text</label>
-          <textarea
-            style={S.textarea}
-            rows={8}
-            value={pastedText}
-            onChange={(e) => setPastedText(e.target.value)}
-            placeholder="Paste ingredients and instructions here…"
-          />
-        </>
-      )}
-
-      {error && <div style={S.dupeWarning}>{error}</div>}
-
-      <button
-        style={{ ...S.primaryBtn, opacity: canExtract ? 1 : 0.4 }}
-        disabled={!canExtract}
-        onClick={handleExtract}
-      >
-        {loading ? "Reading recipe…" : "Extract recipe"}
-      </button>
-      <div style={S.pickerNote}>
-        Uses Claude to read the recipe — you'll review and can edit everything before it's saved.
-      </div>
-    </Modal>
-  );
-}
-
 function TagPicker({ tags, setTags }) {
   const [customInput, setCustomInput] = useState("");
 
@@ -3105,17 +2861,17 @@ function TagPicker({ tags, setTags }) {
   );
 }
 
-function AddRecipeModal({ items, recipes, onClose, onSave, onCreateItem, initial }) {
-  const [name, setName] = useState(initial?.name || "");
-  const [picked, setPicked] = useState(initial?.picked || []);
+function AddRecipeModal({ items, recipes, onClose, onSave, onCreateItem }) {
+  const [name, setName] = useState("");
+  const [picked, setPicked] = useState([]);
   const [optionalPicked, setOptionalPicked] = useState([]);
-  const [freeIngredients, setFreeIngredients] = useState(initial?.freeIngredients || []);
+  const [freeIngredients, setFreeIngredients] = useState([]);
   const [optionalFreeIngredients, setOptionalFreeIngredients] = useState([]);
-  const [amounts, setAmounts] = useState(initial?.amounts || {});
-  const [yieldQty, setYieldQty] = useState(initial?.yieldQty ? String(initial.yieldQty) : "");
-  const [yieldLabel, setYieldLabel] = useState(initial?.yieldLabel || "");
+  const [amounts, setAmounts] = useState({});
+  const [yieldQty, setYieldQty] = useState("");
+  const [yieldLabel, setYieldLabel] = useState("");
   const [tags, setTags] = useState([]);
-  const [instructions, setInstructions] = useState(initial?.instructions || "");
+  const [instructions, setInstructions] = useState("");
 
   function toggleInclude(id) {
     if (picked.includes(id)) {
@@ -3199,12 +2955,7 @@ function AddRecipeModal({ items, recipes, onClose, onSave, onCreateItem, initial
     (picked.length > 0 || freeIngredients.length > 0 || optionalPicked.length > 0 || optionalFreeIngredients.length > 0);
 
   return (
-    <Modal onClose={onClose} title={initial ? "Review imported recipe" : "Add recipe"}>
-      {initial && (
-        <div style={S.pickerNote}>
-          Pulled from your {initial.source || "import"} — double-check names, amounts, and matches before saving.
-        </div>
-      )}
+    <Modal onClose={onClose} title="Add recipe">
       <label style={S.label}>Recipe name</label>
       <input
         autoFocus
@@ -4129,16 +3880,6 @@ const S = {
     background: "transparent",
     flexShrink: 0,
   },
-  importLink: {
-    background: "transparent",
-    color: "#8A6D3B",
-    border: "1px dashed #8A6D3B",
-    borderRadius: "8px",
-    padding: "8px 12px",
-    fontSize: "12px",
-    marginBottom: "12px",
-    width: "100%",
-  },
   resetListBtn: {
     background: "transparent",
     color: "#8A7F68",
@@ -4465,15 +4206,6 @@ const S = {
     padding: "4px 8px",
     fontSize: "11px",
     width: "100%",
-  },
-  importPreview: {
-    width: "100%",
-    maxHeight: "220px",
-    objectFit: "contain",
-    borderRadius: "8px",
-    border: "1px solid #C9BFA8",
-    marginTop: "8px",
-    marginBottom: "8px",
   },
   dupeWarning: {
     fontSize: "12px",
