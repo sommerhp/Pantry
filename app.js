@@ -391,367 +391,6 @@ function ingredientStatusColor(item, freeName, shoppingList) {
   return "#B5482F"; // removed ingredient — nothing to link, treat as missing
 }
 
-class ErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { error: null };
-  }
-  static getDerivedStateFromError(error) {
-    return { error };
-  }
-  render() {
-    if (this.state.error) {
-      return (
-        <div
-          style={{
-            padding: "20px",
-            fontFamily: "monospace",
-            fontSize: "11px",
-            color: "#B5482F",
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          <div style={{ fontWeight: "bold", marginBottom: "10px" }}>
-            Something broke — here's the exact error (screenshot this):
-          </div>
-          {this.state.error.message}
-          {"\n\n"}
-          {this.state.error.stack}
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
-function AppRoot() {
-  const [session, setSession] = useState(undefined); // undefined = checking, null = logged out
-  const [householdId, setHouseholdId] = useState(undefined); // undefined = checking, null = none yet
-  const [bootError, setBootError] = useState("");
-
-  useEffect(() => {
-    let settled = false;
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      setBootError(
-        "This is taking too long to respond. Check your internet connection, and double-check the " +
-          "Supabase URL and key pasted into index.html are exactly right — no missing characters, no " +
-          "extra spaces, and the URL starts with https:// and ends in .supabase.co."
-      );
-    }, 8000);
-
-    supabaseClient.auth
-      .getSession()
-      .then(({ data }) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        setSession(data.session || null);
-      })
-      .catch((e) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        setBootError("Couldn't check login status: " + (e.message || String(e)));
-      });
-    const { data: listener } = supabaseClient.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-      if (!newSession) setHouseholdId(undefined);
-    });
-    return () => {
-      clearTimeout(timeout);
-      listener.subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!session) return;
-    let cancelled = false;
-    const timeout = setTimeout(() => {
-      if (cancelled) return;
-      cancelled = true;
-      setBootError("Looking up your household is taking too long. Check your internet connection and try reopening the app.");
-    }, 8000);
-    supabaseClient
-      .from("household_members")
-      .select("household_id")
-      .eq("user_id", session.user.id)
-      .limit(1)
-      .then(({ data, error }) => {
-        if (cancelled) return;
-        cancelled = true;
-        clearTimeout(timeout);
-        if (error) {
-          setBootError("Couldn't load your household: " + error.message);
-          return;
-        }
-        setHouseholdId(data && data.length > 0 ? data[0].household_id : null);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        cancelled = true;
-        clearTimeout(timeout);
-        setBootError("Couldn't load your household: " + (e.message || String(e)));
-      });
-    return () => {
-      cancelled = true;
-      clearTimeout(timeout);
-    };
-  }, [session]);
-
-  if (bootError) {
-    return (
-      <div style={{ ...S.app, padding: "20px" }}>
-        <div style={{ ...S.dupeWarning, fontSize: "13px" }}>{bootError}</div>
-      </div>
-    );
-  }
-
-  if (session === undefined) {
-    return (
-      <div style={{ ...S.app, alignItems: "center", justifyContent: "center", display: "flex" }}>
-        <span style={{ fontFamily: FONT.mono, color: "#8A6D3B", letterSpacing: "0.08em" }}>loading…</span>
-      </div>
-    );
-  }
-
-  if (!session) return <AuthScreen />;
-
-  if (householdId === undefined) {
-    return (
-      <div style={{ ...S.app, alignItems: "center", justifyContent: "center", display: "flex" }}>
-        <span style={{ fontFamily: FONT.mono, color: "#8A6D3B", letterSpacing: "0.08em" }}>loading…</span>
-      </div>
-    );
-  }
-
-  if (!householdId) return <HouseholdScreen session={session} onJoined={(id) => setHouseholdId(id)} />;
-
-  window.currentHouseholdId = householdId;
-  return <PantryKeeper key={householdId} />;
-}
-
-function AuthScreen() {
-  const [mode, setMode] = useState("login");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [checkEmail, setCheckEmail] = useState(false);
-
-  async function handleSubmit() {
-    setError("");
-    setLoading(true);
-    try {
-      if (mode === "signup") {
-        const { data, error } = await supabaseClient.auth.signUp({
-          email: email.trim(),
-          password,
-        });
-        if (error) throw error;
-        if (!data.session) {
-          setCheckEmail(true);
-        }
-      } else {
-        const { error } = await supabaseClient.auth.signInWithPassword({
-          email: email.trim(),
-          password,
-        });
-        if (error) throw error;
-      }
-    } catch (e) {
-      setError(e.message || "Something went wrong.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  if (checkEmail) {
-    return (
-      <div style={{ ...S.app, alignItems: "center", justifyContent: "center", display: "flex" }}>
-        <div style={{ maxWidth: "320px", padding: "24px", textAlign: "center" }}>
-          <div style={S.eyebrow}>kitchen ledger</div>
-          <h1 style={S.h1}>Check your email</h1>
-          <p style={{ fontFamily: FONT.body, fontSize: "14px", color: "#5C5847" }}>
-            We sent a confirmation link to {email}. Click it, then come back here and log in.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ ...S.app, alignItems: "center", justifyContent: "center", display: "flex" }}>
-      <div style={{ maxWidth: "340px", width: "100%", padding: "24px" }}>
-        <div style={S.eyebrow}>kitchen ledger</div>
-        <h1 style={S.h1}>Pantry Keeper</h1>
-        <div style={{ ...S.segment, marginTop: "20px" }}>
-          <button
-            onClick={() => setMode("login")}
-            style={{ ...S.segmentBtn, ...(mode === "login" ? S.segmentActive : {}) }}
-          >
-            Log in
-          </button>
-          <button
-            onClick={() => setMode("signup")}
-            style={{ ...S.segmentBtn, ...(mode === "signup" ? S.segmentActive : {}) }}
-          >
-            Sign up
-          </button>
-        </div>
-        <label style={S.label}>Email</label>
-        <input
-          type="email"
-          autoCapitalize="none"
-          style={S.input}
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-        <label style={S.label}>Password</label>
-        <input
-          type="password"
-          style={S.input}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-        {error && <div style={S.dupeWarning}>{error}</div>}
-        <button
-          style={{ ...S.primaryBtn, opacity: loading ? 0.5 : 1 }}
-          disabled={loading}
-          onClick={handleSubmit}
-        >
-          {loading ? "…" : mode === "login" ? "Log in" : "Sign up"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function HouseholdScreen({ session, onJoined }) {
-  const [mode, setMode] = useState("create");
-  const [name, setName] = useState("");
-  const [code, setCode] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  async function handleCreate() {
-    setError("");
-    setLoading(true);
-    try {
-      const { data: household, error: hErr } = await supabaseClient
-        .from("households")
-        .insert({ name: name.trim() || "My Household" })
-        .select()
-        .single();
-      if (hErr) throw hErr;
-      const { error: mErr } = await supabaseClient
-        .from("household_members")
-        .insert({ household_id: household.id, user_id: session.user.id });
-      if (mErr) throw mErr;
-      const { error: dErr } = await supabaseClient
-        .from("household_data")
-        .insert({ household_id: household.id });
-      if (dErr) throw dErr;
-      onJoined(household.id);
-    } catch (e) {
-      setError(e.message || "Could not create household.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleJoin() {
-    setError("");
-    setLoading(true);
-    try {
-      const trimmedCode = code.trim();
-      const { data: matches, error: sErr } = await supabaseClient
-        .from("households")
-        .select("id")
-        .eq("invite_code", trimmedCode)
-        .limit(1);
-      if (sErr) throw sErr;
-      if (!matches || matches.length === 0) {
-        setError("No household found with that code — double check it.");
-        return;
-      }
-      const { error: mErr } = await supabaseClient
-        .from("household_members")
-        .insert({ household_id: matches[0].id, user_id: session.user.id });
-      if (mErr) throw mErr;
-      onJoined(matches[0].id);
-    } catch (e) {
-      setError(e.message || "Could not join household.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <div style={{ ...S.app, alignItems: "center", justifyContent: "center", display: "flex" }}>
-      <div style={{ maxWidth: "340px", width: "100%", padding: "24px" }}>
-        <div style={S.eyebrow}>kitchen ledger</div>
-        <h1 style={S.h1}>Set up your household</h1>
-        <div style={{ ...S.segment, marginTop: "20px" }}>
-          <button
-            onClick={() => setMode("create")}
-            style={{ ...S.segmentBtn, ...(mode === "create" ? S.segmentActive : {}) }}
-          >
-            Create new
-          </button>
-          <button
-            onClick={() => setMode("join")}
-            style={{ ...S.segmentBtn, ...(mode === "join" ? S.segmentActive : {}) }}
-          >
-            Join existing
-          </button>
-        </div>
-        {mode === "create" ? (
-          <>
-            <label style={S.label}>Household name</label>
-            <input
-              style={S.input}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. The Smiths"
-            />
-            <button
-              style={{ ...S.primaryBtn, opacity: loading ? 0.5 : 1 }}
-              disabled={loading}
-              onClick={handleCreate}
-            >
-              {loading ? "…" : "Create household"}
-            </button>
-          </>
-        ) : (
-          <>
-            <label style={S.label}>Invite code</label>
-            <div style={S.pickerNote}>
-              Ask whoever set up the household for their code — they can find it in Settings.
-            </div>
-            <input
-              style={S.input}
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              autoCapitalize="none"
-              placeholder="e.g. a1b2c3d4"
-            />
-            <button
-              style={{ ...S.primaryBtn, opacity: loading ? 0.5 : 1 }}
-              disabled={loading}
-              onClick={handleJoin}
-            >
-              {loading ? "…" : "Join household"}
-            </button>
-          </>
-        )}
-        {error && <div style={S.dupeWarning}>{error}</div>}
-      </div>
-    </div>
-  );
-}
-
 function PantryKeeper() {
   const [data, setData] = useState(emptyData);
   const [loaded, setLoaded] = useState(false);
@@ -2497,32 +2136,11 @@ function SettingsModal({ onClose }) {
   const [restoreText, setRestoreText] = useState("");
   const [restoreMsg, setRestoreMsg] = useState("");
   const [confirmRestore, setConfirmRestore] = useState(false);
-  const [inviteCode, setInviteCode] = useState("");
-  const [inviteError, setInviteError] = useState("");
-  const [inviteCopyMsg, setInviteCopyMsg] = useState("");
 
-  useEffect(() => {
-    const householdId = window.currentHouseholdId;
-    if (!householdId) return;
-    supabaseClient
-      .from("households")
-      .select("invite_code")
-      .eq("id", householdId)
-      .single()
-      .then(({ data, error }) => {
-        if (error || !data) {
-          setInviteError("Couldn't load invite code.");
-          return;
-        }
-        setInviteCode(data.invite_code);
-      });
-  }, []);
-
-  async function openBackup() {
+  function openBackup() {
     let raw = "";
     try {
-      const res = await window.storage.get(STORAGE_KEY);
-      raw = res && res.value ? res.value : "";
+      raw = localStorage.getItem(STORAGE_KEY) || "";
     } catch (e) {
       raw = "";
     }
@@ -2541,23 +2159,14 @@ function SettingsModal({ onClose }) {
     }
   }
 
-  async function copyInviteCode() {
-    try {
-      await navigator.clipboard.writeText(inviteCode);
-      setInviteCopyMsg("Copied ✓");
-    } catch (e) {
-      setInviteCopyMsg("Couldn't auto-copy — select the code above manually.");
-    }
-  }
-
-  async function handleRestore() {
+  function handleRestore() {
     try {
       const parsed = JSON.parse(restoreText);
       if (!parsed || typeof parsed !== "object" || !("items" in parsed)) {
         setRestoreMsg("That doesn't look like a Pantry Keeper backup — check you pasted the whole thing.");
         return;
       }
-      await window.storage.set(STORAGE_KEY, restoreText);
+      localStorage.setItem(STORAGE_KEY, restoreText);
       setRestoreMsg("Restored ✓ — close Settings and reopen the app to see it.");
       setConfirmRestore(false);
     } catch (e) {
@@ -2565,34 +2174,12 @@ function SettingsModal({ onClose }) {
     }
   }
 
-  function handleSignOut() {
-    supabaseClient.auth.signOut();
-  }
-
   return (
     <Modal onClose={onClose} title="Settings">
-      <label style={S.label}>Household</label>
-      <div style={S.pickerNote}>
-        Share this code with anyone you want in your household — they'll enter it when they set up the
-        app, and from then on you'll both see the same pantry.
-      </div>
-      <div style={{ ...S.pickerNote, fontFamily: FONT.mono, fontSize: "14px", color: "#2B2A25" }}>
-        {inviteCode || inviteError || "Loading…"}
-      </div>
-      {inviteCode && (
-        <button style={{ ...S.lowBtn, width: "100%", marginBottom: "8px" }} onClick={copyInviteCode}>
-          Copy invite code
-        </button>
-      )}
-      {inviteCopyMsg && <div style={S.pickerNote}>{inviteCopyMsg}</div>}
-      <button style={{ ...S.lowBtn, width: "100%", marginBottom: "16px" }} onClick={handleSignOut}>
-        Sign out
-      </button>
-
       <label style={S.label}>Backup your data</label>
       <div style={S.pickerNote}>
-        Your household's data lives in the cloud now, shared with anyone in your household — but it's
-        still worth keeping a backup copy of your own, just in case.
+        Your pantry lives only on this phone, in this browser. If you ever clear this site's data, switch
+        phones, or reinstall the app, everything is lost unless you've backed it up here first.
       </div>
       {!showBackup ? (
         <button style={{ ...S.primaryBtn, marginBottom: "16px" }} onClick={openBackup}>

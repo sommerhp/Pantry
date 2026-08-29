@@ -1,5 +1,5 @@
 // Bump this when you deploy an update — it forces the new files to replace the old cache.
-const CACHE_NAME = "pantry-keeper-v15";
+const CACHE_NAME = "pantry-keeper-v12";
 
 const APP_SHELL = [
   "./",
@@ -11,7 +11,6 @@ const APP_SHELL = [
   "./vendor/react.production.min.js",
   "./vendor/react-dom.production.min.js",
   "./vendor/babel.min.js",
-  "./vendor/supabase.js",
 ];
 
 self.addEventListener("install", (event) => {
@@ -40,12 +39,10 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
-  // Never cache calls to Supabase (any project) or the Anthropic API — those need to
-  // hit the network live every time. Caching a Supabase response would risk serving
-  // stale synced data instead of what's actually current across the household.
-  if (url.hostname.endsWith(".supabase.co") || url.hostname === "api.anthropic.com") return;
+  // Never cache calls to the Anthropic API — those need to hit the network live.
+  if (url.hostname === "api.anthropic.com") return;
 
-  // Cache-first for the app shell and vendored scripts, so the app opens instantly offline.
+  // Cache-first for the app shell and CDN scripts, so the app opens instantly offline.
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
